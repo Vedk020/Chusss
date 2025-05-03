@@ -25,7 +25,7 @@ A modern Java-based online chess game with real-time multiplayer capabilities, b
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/yourusername/chess.git
+git clone [https://github.com/yourusername/chess.git](https://github.com/divye07/chess.git)
 cd chess
 ```
 
@@ -91,7 +91,6 @@ chess/
 │   │   │   ├── Server.java
 │   │   │   └── Client.java
 │   │   └── resources/
-├── pom.xml
 └── README.md
 ```
 
