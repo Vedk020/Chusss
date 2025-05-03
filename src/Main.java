@@ -4,6 +4,7 @@ import javafx.application.Application;
 import javafx.application.Platform;
 import javafx.scene.Scene;
 import javafx.scene.control.Alert;
+import javafx.scene.control.Button;
 import javafx.scene.control.ButtonType;
 import javafx.scene.control.TextInputDialog;
 import javafx.scene.input.MouseEvent;
@@ -43,6 +44,13 @@ public class Main extends Application {
     private int blackTotalTime = 600;  // Total time for Black in seconds (10 minutes)
     private Timeline timer;
 
+    private Button drawButton;
+    private Button resignButton;
+    private VBox controlPanel;
+    private HBox timerPanel;
+    private Text whiteTimerText;
+    private Text blackTimerText;
+
     @Override
     public void start(Stage primaryStage) {
         boolean isServer = askIfServer();
@@ -75,7 +83,7 @@ public class Main extends Application {
                 Thread.sleep(50); // Wait for the socket and streams to be initialized
             }
 
-            // ✅ Now it’s safe to send
+            // ✅ Now it's safe to send
             connection.send("NAME " + myName);
 
         } catch (Exception e) {
@@ -103,8 +111,47 @@ public class Main extends Application {
         updateBoard();
         gameStatusText.setText(isMyTurn ? myName + "'s turn" : opponentName + "'s turn");
 
+        // Create control panel with buttons
+        controlPanel = new VBox(10);
+        controlPanel.setStyle("-fx-padding: 10; -fx-background-color: #f0f0f0;");
+
+        drawButton = new Button("Offer Draw");
+        resignButton = new Button("Resign");
+
+        drawButton.setStyle("-fx-background-color: #4CAF50; -fx-text-fill: white; -fx-font-size: 14px;");
+        resignButton.setStyle("-fx-background-color: #f44336; -fx-text-fill: white; -fx-font-size: 14px;");
+
+        drawButton.setPrefWidth(120);
+        resignButton.setPrefWidth(120);
+
+        drawButton.setOnAction(e -> handleDraw());
+        resignButton.setOnAction(e -> handleResign());
+
+        controlPanel.getChildren().addAll(drawButton, resignButton);
+
+        // Create timer panel
+        timerPanel = new HBox(20);
+        timerPanel.setStyle("-fx-padding: 10; -fx-background-color: #f0f0f0;");
+
+        whiteTimerText = new Text("White: 10:00");
+        blackTimerText = new Text("Black: 10:00");
+
+        whiteTimerText.setFont(Font.font("Arial", FontWeight.BOLD, 16));
+        blackTimerText.setFont(Font.font("Arial", FontWeight.BOLD, 16));
+
+        timerPanel.getChildren().addAll(whiteTimerText, blackTimerText);
+
+        // Create main layout
+        BorderPane mainLayout = new BorderPane();
+        mainLayout.setCenter(grid);
+        mainLayout.setRight(controlPanel);
+        mainLayout.setTop(timerPanel);
+
+        // Update timer display method
+        updateTimerDisplay();
+
         primaryStage.setTitle("Online Chess Game");
-        primaryStage.setScene(new Scene(grid));
+        primaryStage.setScene(new Scene(mainLayout));
         primaryStage.show();
 
         // Initialize and start the timer
@@ -161,6 +208,13 @@ public class Main extends Application {
             if (msg.startsWith("NAME ")) {
                 opponentName = msg.substring(5);
                 gameStatusText.setText(currentPlayer.equals("w") ? myName : opponentName + "'s turn");
+                return;
+            } else if (msg.equals("DRAW_OFFER")) {
+                handleDrawOffer();
+                return;
+            } else if (msg.equals("RESIGN")) {
+                gameOver = true;
+                gameStatusText.setText(myName + " wins by resignation!");
                 return;
             }
 
@@ -223,13 +277,27 @@ public class Main extends Application {
             stack = new StackPane();
             rect = new Rectangle(TILE_SIZE, TILE_SIZE);
             rect.setFill((row + col) % 2 == 0 ? Color.rgb(240, 217, 181) : Color.rgb(181, 136, 99));
+            rect.setStroke(Color.BLACK);
+            rect.setStrokeWidth(0.5);
             stack.getChildren().add(rect);
 
             text = new Text();
-            text.setFont(Font.font(32));
+            text.setFont(Font.font("Arial", FontWeight.BOLD, 32));
             stack.getChildren().add(text);
 
             stack.setOnMouseClicked(this::handleClick);
+            stack.setOnMouseEntered(e -> {
+                if (!gameOver && piecePositions[row][col] != null) {
+                    rect.setStroke(Color.YELLOW);
+                    rect.setStrokeWidth(2);
+                }
+            });
+            stack.setOnMouseExited(e -> {
+                if (selectedRow != row || selectedCol != col) {
+                    rect.setStroke(Color.BLACK);
+                    rect.setStrokeWidth(0.5);
+                }
+            });
         }
 
         void updatePiece(String piece) {
@@ -433,6 +501,71 @@ public class Main extends Application {
                     board[r][c].rect.setStrokeWidth(0);
                 }
             }
+        }
+    }
+
+    private void updateTimerDisplay() {
+        whiteTimerText.setText("White: " + formatTime(whiteTotalTime));
+        blackTimerText.setText("Black: " + formatTime(blackTotalTime));
+
+        // Highlight active player's timer
+        if (currentPlayer.equals("w")) {
+            whiteTimerText.setFill(Color.RED);
+            blackTimerText.setFill(Color.BLACK);
+        } else {
+            whiteTimerText.setFill(Color.BLACK);
+            blackTimerText.setFill(Color.RED);
+        }
+    }
+
+    private void handleDraw() {
+        if (!gameOver) {
+            Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
+            alert.setTitle("Offer Draw");
+            alert.setHeaderText("Offer Draw to " + opponentName);
+            alert.setContentText("Do you want to offer a draw?");
+
+            Optional<ButtonType> result = alert.showAndWait();
+            if (result.isPresent() && result.get() == ButtonType.OK) {
+                try {
+                    connection.send("DRAW_OFFER");
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+            }
+        }
+    }
+
+    private void handleResign() {
+        if (!gameOver) {
+            Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
+            alert.setTitle("Resign Game");
+            alert.setHeaderText("Confirm Resignation");
+            alert.setContentText("Are you sure you want to resign?");
+
+            Optional<ButtonType> result = alert.showAndWait();
+            if (result.isPresent() && result.get() == ButtonType.OK) {
+                try {
+                    connection.send("RESIGN");
+                    gameOver = true;
+                    gameStatusText.setText(opponentName + " wins by resignation!");
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+            }
+        }
+    }
+
+    private void handleDrawOffer() {
+        Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
+        alert.setTitle("Draw Offer");
+        alert.setHeaderText(opponentName + " offers a draw");
+        alert.setContentText("Do you accept the draw?");
+
+        Optional<ButtonType> result = alert.showAndWait();
+        if (result.isPresent() && result.get() == ButtonType.OK) {
+            gameOver = true;
+            gameStatusText.setText("Game drawn by agreement!");
         }
     }
 
