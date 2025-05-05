@@ -18,10 +18,12 @@ import javafx.stage.Stage;
 import javafx.util.Duration;
 import java.util.*;
 import java.util.Optional;
+import javafx.geometry.Pos;
+import javafx.scene.control.Label;
 
 public class Main extends Application {
 
-    private static final int TILE_SIZE = 80;
+    private static int TILE_SIZE = 80;
     private static final int WIDTH = 8;
     private static final int HEIGHT = 8;
 
@@ -30,6 +32,10 @@ public class Main extends Application {
     private int selectedRow = -1, selectedCol = -1;
     private String currentPlayer = "w";
     private boolean gameOver = false;
+    private String gameResult = "";
+    private int whiteScore = 0;
+    private int blackScore = 0;
+    private boolean isServer = false;
 
     private Text gameStatusText = new Text();
     private Text timerText = new Text("10:00");
@@ -44,16 +50,26 @@ public class Main extends Application {
     private int blackTotalTime = 600;  // Total time for Black in seconds (10 minutes)
     private Timeline timer;
 
-    private Button drawButton;
     private Button resignButton;
     private VBox controlPanel;
     private HBox timerPanel;
     private Text whiteTimerText;
     private Text blackTimerText;
 
+    private int whitePoints = 0;
+    private int blackPoints = 0;
+    private Text whitePointsText;
+    private Text blackPointsText;
+
+    private List<String> capturedByWhite = new ArrayList<>();
+    private List<String> capturedByBlack = new ArrayList<>();
+    private VBox capturedWhiteBox;
+    private VBox capturedBlackBox;
+
     @Override
     public void start(Stage primaryStage) {
         boolean isServer = askIfServer();
+        this.isServer = isServer;
         isMyTurn = isServer;
 
         TextInputDialog nameDialog = new TextInputDialog(isServer ? "White" : "Black");
@@ -115,19 +131,27 @@ public class Main extends Application {
         controlPanel = new VBox(10);
         controlPanel.setStyle("-fx-padding: 10; -fx-background-color: #f0f0f0;");
 
-        drawButton = new Button("Offer Draw");
         resignButton = new Button("Resign");
-
-        drawButton.setStyle("-fx-background-color: #4CAF50; -fx-text-fill: white; -fx-font-size: 14px;");
-        resignButton.setStyle("-fx-background-color: #f44336; -fx-text-fill: white; -fx-font-size: 14px;");
-
-        drawButton.setPrefWidth(120);
+        resignButton.setStyle("-fx-background-color: linear-gradient(to right, #f44336, #ff6a00); -fx-text-fill: white; -fx-font-size: 14px; -fx-background-radius: 8; -fx-effect: dropshadow(gaussian, #b0b0b0, 5, 0.2, 0, 2);");
         resignButton.setPrefWidth(120);
-
-        drawButton.setOnAction(e -> handleDraw());
         resignButton.setOnAction(e -> handleResign());
+        controlPanel.getChildren().clear();
+        controlPanel.getChildren().addAll(resignButton);
 
-        controlPanel.getChildren().addAll(drawButton, resignButton);
+        // Captured pieces display
+        capturedWhiteBox = new VBox(5);
+        capturedBlackBox = new VBox(5);
+        capturedWhiteBox.setStyle("-fx-padding: 10; -fx-background-color: #fff; -fx-border-radius: 8; -fx-background-radius: 8; -fx-effect: dropshadow(gaussian, #b0b0b0, 5, 0.1, 0, 1);");
+        capturedBlackBox.setStyle("-fx-padding: 10; -fx-background-color: #fff; -fx-border-radius: 8; -fx-background-radius: 8; -fx-effect: dropshadow(gaussian, #b0b0b0, 5, 0.1, 0, 1);");
+        Label capturedWhiteLabel = new Label("White captured:");
+        Label capturedBlackLabel = new Label("Black captured:");
+        capturedWhiteLabel.setFont(Font.font("Arial", FontWeight.BOLD, 14));
+        capturedBlackLabel.setFont(Font.font("Arial", FontWeight.BOLD, 14));
+        capturedWhiteBox.getChildren().add(capturedWhiteLabel);
+        capturedBlackBox.getChildren().add(capturedBlackLabel);
+        VBox capturedPanel = new VBox(20, capturedWhiteBox, capturedBlackBox);
+        capturedPanel.setStyle("-fx-padding: 10; -fx-background-color: #f0f0f0; -fx-border-radius: 10; -fx-background-radius: 10;");
+        controlPanel.getChildren().add(capturedPanel);
 
         // Create timer panel
         timerPanel = new HBox(20);
@@ -141,18 +165,35 @@ public class Main extends Application {
 
         timerPanel.getChildren().addAll(whiteTimerText, blackTimerText);
 
+        // Create points panel
+        HBox pointsPanel = new HBox(40);
+        pointsPanel.setStyle("-fx-padding: 10; -fx-background-color: #e0e7ef; -fx-border-radius: 10; -fx-background-radius: 10; -fx-effect: dropshadow(gaussian, #b0b0b0, 10, 0.2, 0, 2);");
+        pointsPanel.setAlignment(Pos.CENTER);
+        whitePointsText = new Text("White Points: 0");
+        blackPointsText = new Text("Black Points: 0");
+        whitePointsText.setFont(Font.font("Arial", FontWeight.BOLD, 18));
+        blackPointsText.setFont(Font.font("Arial", FontWeight.BOLD, 18));
+        pointsPanel.getChildren().addAll(whitePointsText, blackPointsText);
+
         // Create main layout
         BorderPane mainLayout = new BorderPane();
         mainLayout.setCenter(grid);
         mainLayout.setRight(controlPanel);
-        mainLayout.setTop(timerPanel);
+        VBox topPanel = new VBox(timerPanel, pointsPanel);
+        topPanel.setStyle("-fx-background-color: linear-gradient(to right, #e0e7ef, #f8fafc);");
+        mainLayout.setTop(topPanel);
+        mainLayout.setStyle("-fx-background-color: linear-gradient(to bottom right, #e0e7ef, #f8fafc);");
 
-        // Update timer display method
-        updateTimerDisplay();
-
+        // Responsive resizing
+        StackPane root = new StackPane(mainLayout);
+        Scene scene = new Scene(root);
+        primaryStage.setScene(scene);
         primaryStage.setTitle("Online Chess Game");
-        primaryStage.setScene(new Scene(mainLayout));
         primaryStage.show();
+
+        // Listen for window size changes to resize tiles
+        root.widthProperty().addListener((obs, oldVal, newVal) -> resizeBoard(grid, root));
+        root.heightProperty().addListener((obs, oldVal, newVal) -> resizeBoard(grid, root));
 
         // Initialize and start the timer
         timer = new Timeline(new KeyFrame(Duration.seconds(1), e -> updateTimer()));
@@ -160,21 +201,40 @@ public class Main extends Application {
         timer.playFromStart();
     }
 
-    private void updateTimer() {
-        if (currentPlayer.equals("w")) {
-            whiteTotalTime--;
-        } else {
-            blackTotalTime--;
+    private void resizeBoard(GridPane grid, StackPane root) {
+        double size = Math.min(root.getWidth(), root.getHeight() - 100) / WIDTH;
+        TILE_SIZE = (int) Math.max(size, 20); // Minimum size
+        for (int row = 0; row < HEIGHT; row++) {
+            for (int col = 0; col < WIDTH; col++) {
+                board[row][col].resizeTile();
+            }
         }
+    }
 
-        // Update the timer display
-        timerText.setText((currentPlayer.equals("w") ? "White: " : "Black: ") +
-                formatTime(currentPlayer.equals("w") ? whiteTotalTime : blackTotalTime));
+    private void updateTimer() {
+        if (!gameOver) {  // Only update timer if game is not over
+            if (currentPlayer.equals("w")) {
+                whiteTotalTime--;
+            } else {
+                blackTotalTime--;
+            }
 
-        // If time runs out, end the turn
-        if (whiteTotalTime == 0 || blackTotalTime == 0) {
-            gameStatusText.setText((currentPlayer.equals("w") ? "White's" : "Black's") + " time is up!");
-            switchTurn();
+            // Update the timer display
+            timerText.setText((currentPlayer.equals("w") ? "White: " : "Black: ") +
+                    formatTime(currentPlayer.equals("w") ? whiteTotalTime : blackTotalTime));
+
+            // If time runs out, end the game
+            if (whiteTotalTime == 0 || blackTotalTime == 0) {
+                gameOver = true;
+                gameResult = (currentPlayer.equals("w") ? "Black" : "White") + " wins on time!";
+                if (currentPlayer.equals("w")) {
+                    blackScore += 1;
+                } else {
+                    whiteScore += 1;
+                }
+                timer.stop();
+                showWinPage();
+            }
         }
     }
 
@@ -209,12 +269,31 @@ public class Main extends Application {
                 opponentName = msg.substring(5);
                 gameStatusText.setText(currentPlayer.equals("w") ? myName : opponentName + "'s turn");
                 return;
-            } else if (msg.equals("DRAW_OFFER")) {
-                handleDrawOffer();
-                return;
             } else if (msg.equals("RESIGN")) {
                 gameOver = true;
-                gameStatusText.setText(myName + " wins by resignation!");
+                gameResult = opponentName + " wins by resignation!";
+                if (currentPlayer.equals("w")) {
+                    blackScore += 1;
+                } else {
+                    whiteScore += 1;
+                }
+                timer.stop();
+                showWinPage();
+                return;
+            } else if (msg.startsWith("CHECKMATE:")) {
+                gameOver = true;
+                String winner = msg.substring(10);
+                if (winner.equals(myName)) {
+                    gameResult = myName + " wins!";
+                    whiteScore += currentPlayer.equals("w") ? 1 : 0;
+                    blackScore += currentPlayer.equals("b") ? 1 : 0;
+                } else {
+                    gameResult = opponentName + " wins!";
+                    whiteScore += currentPlayer.equals("b") ? 1 : 0;
+                    blackScore += currentPlayer.equals("w") ? 1 : 0;
+                }
+                timer.stop();
+                showWinPage();
                 return;
             }
 
@@ -229,7 +308,21 @@ public class Main extends Application {
 
             if (isCheckmate(currentPlayer)) {
                 gameOver = true;
-                gameStatusText.setText(opponentColor().equals("w") ? myName + " wins!" : opponentName + " wins!");
+                String winner = opponentColor().equals("w") ? myName : opponentName;
+                gameResult = winner + " wins!";
+                if (currentPlayer.equals("w")) {
+                    blackScore += 1;
+                } else {
+                    whiteScore += 1;
+                }
+                timer.stop();
+                showWinPage();
+                // Notify opponent
+                try {
+                    connection.send("CHECKMATE:" + winner);
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
             } else if (isInCheck(currentPlayer)) {
                 gameStatusText.setText((currentPlayer.equals("w") ? myName : opponentName) + " is in check!");
             } else {
@@ -261,8 +354,53 @@ public class Main extends Application {
     }
 
     private void movePiece(int fromRow, int fromCol, int toRow, int toCol) {
+        String captured = piecePositions[toRow][toCol];
         piecePositions[toRow][toCol] = piecePositions[fromRow][fromCol];
         piecePositions[fromRow][fromCol] = null;
+        // Update points and captured pieces if a piece is captured
+        if (captured != null) {
+            if (captured.charAt(0) == 'w') {
+                blackPoints += getPieceValue(captured);
+                capturedByBlack.add(captured);
+            } else {
+                whitePoints += getPieceValue(captured);
+                capturedByWhite.add(captured);
+            }
+            updatePointsDisplay();
+            updateCapturedDisplay();
+        }
+    }
+
+    private void updateCapturedDisplay() {
+        capturedWhiteBox.getChildren().removeIf(node -> node instanceof Text);
+        capturedBlackBox.getChildren().removeIf(node -> node instanceof Text);
+        if (!capturedByWhite.isEmpty()) {
+            Text t = new Text(capturedListToSymbols(capturedByWhite));
+            t.setFont(Font.font("Arial", 22));
+            t.setFill(Color.BLACK);
+            capturedWhiteBox.getChildren().add(t);
+        }
+        if (!capturedByBlack.isEmpty()) {
+            Text t = new Text(capturedListToSymbols(capturedByBlack));
+            t.setFont(Font.font("Arial", 22));
+            t.setFill(Color.BLACK);
+            capturedBlackBox.getChildren().add(t);
+        }
+    }
+
+    private String capturedListToSymbols(List<String> captured) {
+        StringBuilder sb = new StringBuilder();
+        for (String piece : captured) {
+            switch (piece.charAt(1)) {
+                case 'K': sb.append("♔"); break;
+                case 'Q': sb.append("♕"); break;
+                case 'R': sb.append("♖"); break;
+                case 'B': sb.append("♗"); break;
+                case 'N': sb.append("♘"); break;
+                case 'P': sb.append("♙"); break;
+            }
+        }
+        return sb.toString();
     }
 
     private class Tile {
@@ -300,17 +438,23 @@ public class Main extends Application {
             });
         }
 
+        void resizeTile() {
+            rect.setWidth(TILE_SIZE);
+            rect.setHeight(TILE_SIZE);
+            text.setFont(Font.font("Arial", FontWeight.BOLD, TILE_SIZE * 0.4));
+        }
+
         void updatePiece(String piece) {
             if (piece == null) {
                 text.setText("");
             } else {
                 switch (piece.charAt(1)) {
-                    case 'K' -> text.setText("♔");
-                    case 'Q' -> text.setText("♕");
-                    case 'R' -> text.setText("♖");
-                    case 'B' -> text.setText("♗");
-                    case 'N' -> text.setText("♘");
-                    case 'P' -> text.setText("♙");
+                    case 'K': text.setText("♔"); break;
+                    case 'Q': text.setText("♕"); break;
+                    case 'R': text.setText("♖"); break;
+                    case 'B': text.setText("♗"); break;
+                    case 'N': text.setText("♘"); break;
+                    case 'P': text.setText("♙"); break;
                 }
                 text.setFill(piece.charAt(0) == 'w' ? Color.WHITE : Color.BLACK);
             }
@@ -342,7 +486,21 @@ public class Main extends Application {
 
                         if (isCheckmate(opponentColor())) {
                             gameOver = true;
-                            gameStatusText.setText(myName + " wins!");
+                            String winner = currentPlayer.equals("w") ? myName : opponentName;
+                            gameResult = winner + " wins!";
+                            if (currentPlayer.equals("w")) {
+                                blackScore += 1;
+                            } else {
+                                whiteScore += 1;
+                            }
+                            timer.stop();
+                            showWinPage();
+                            // Notify opponent
+                            try {
+                                connection.send("CHECKMATE:" + winner);
+                            } catch (Exception e) {
+                                e.printStackTrace();
+                            }
                         } else if (isInCheck(opponentColor())) {
                             gameStatusText.setText(opponentName + " is in check!");
                         } else {
@@ -370,15 +528,17 @@ public class Main extends Application {
         char type = piece.charAt(1);
         if (piecePositions[toRow][toCol] != null && piecePositions[toRow][toCol].charAt(0) == color) return false;
 
-        return switch (type) {
-            case 'K' -> isValidKingMove(fromRow, fromCol, toRow, toCol);
-            case 'Q' -> isValidQueenMove(fromRow, fromCol, toRow, toCol);
-            case 'R' -> isValidRookMove(fromRow, fromCol, toRow, toCol);
-            case 'B' -> isValidBishopMove(fromRow, fromCol, toRow, toCol);
-            case 'N' -> isValidKnightMove(fromRow, fromCol, toRow, toCol);
-            case 'P' -> isValidPawnMove(fromRow, fromCol, toRow, toCol, color);
-            default -> false;
-        };
+        boolean result = false;
+        switch (type) {
+            case 'K': result = isValidKingMove(fromRow, fromCol, toRow, toCol); break;
+            case 'Q': result = isValidQueenMove(fromRow, fromCol, toRow, toCol); break;
+            case 'R': result = isValidRookMove(fromRow, fromCol, toRow, toCol); break;
+            case 'B': result = isValidBishopMove(fromRow, fromCol, toRow, toCol); break;
+            case 'N': result = isValidKnightMove(fromRow, fromCol, toRow, toCol); break;
+            case 'P': result = isValidPawnMove(fromRow, fromCol, toRow, toCol, color); break;
+            default: result = false;
+        }
+        return result;
     }
 
     private boolean isValidKingMove(int r1, int c1, int r2, int c2) {
@@ -507,32 +667,17 @@ public class Main extends Application {
     private void updateTimerDisplay() {
         whiteTimerText.setText("White: " + formatTime(whiteTotalTime));
         blackTimerText.setText("Black: " + formatTime(blackTotalTime));
-
-        // Highlight active player's timer
+        // Highlight active player's timer and points
         if (currentPlayer.equals("w")) {
             whiteTimerText.setFill(Color.RED);
             blackTimerText.setFill(Color.BLACK);
+            whitePointsText.setFill(Color.RED);
+            blackPointsText.setFill(Color.BLACK);
         } else {
             whiteTimerText.setFill(Color.BLACK);
             blackTimerText.setFill(Color.RED);
-        }
-    }
-
-    private void handleDraw() {
-        if (!gameOver) {
-            Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
-            alert.setTitle("Offer Draw");
-            alert.setHeaderText("Offer Draw to " + opponentName);
-            alert.setContentText("Do you want to offer a draw?");
-
-            Optional<ButtonType> result = alert.showAndWait();
-            if (result.isPresent() && result.get() == ButtonType.OK) {
-                try {
-                    connection.send("DRAW_OFFER");
-                } catch (Exception e) {
-                    e.printStackTrace();
-                }
-            }
+            whitePointsText.setFill(Color.BLACK);
+            blackPointsText.setFill(Color.RED);
         }
     }
 
@@ -548,7 +693,14 @@ public class Main extends Application {
                 try {
                     connection.send("RESIGN");
                     gameOver = true;
-                    gameStatusText.setText(opponentName + " wins by resignation!");
+                    gameResult = opponentName + " wins by resignation!";
+                    if (currentPlayer.equals("w")) {
+                        blackScore += 1;
+                    } else {
+                        whiteScore += 1;
+                    }
+                    timer.stop();
+                    showWinPage();
                 } catch (Exception e) {
                     e.printStackTrace();
                 }
@@ -556,16 +708,97 @@ public class Main extends Application {
         }
     }
 
-    private void handleDrawOffer() {
-        Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
-        alert.setTitle("Draw Offer");
-        alert.setHeaderText(opponentName + " offers a draw");
-        alert.setContentText("Do you accept the draw?");
+    private void showWinPage() {
+        // Create a new stage for the win page
+        Stage winStage = new Stage();
+        winStage.setTitle("Game Over");
 
-        Optional<ButtonType> result = alert.showAndWait();
-        if (result.isPresent() && result.get() == ButtonType.OK) {
-            gameOver = true;
-            gameStatusText.setText("Game drawn by agreement!");
+        // Create the main layout
+        VBox mainLayout = new VBox(20);
+        mainLayout.setAlignment(Pos.CENTER);
+        mainLayout.setStyle("-fx-padding: 20; -fx-background-color: #f0f0f0;");
+
+        // Game result text
+        Text resultText = new Text(gameResult);
+        resultText.setFont(Font.font("Arial", FontWeight.BOLD, 24));
+        resultText.setFill(Color.DARKRED);
+
+        // Scorecard
+        VBox scorecard = new VBox(10);
+        scorecard.setAlignment(Pos.CENTER);
+        scorecard.setStyle("-fx-background-color: white; -fx-padding: 20; -fx-border-radius: 10;");
+
+        Text whiteScoreText = new Text("White (" + myName + "): " + whiteScore);
+        Text blackScoreText = new Text("Black (" + opponentName + "): " + blackScore);
+        whiteScoreText.setFont(Font.font("Arial", 16));
+        blackScoreText.setFont(Font.font("Arial", 16));
+
+        scorecard.getChildren().addAll(whiteScoreText, blackScoreText);
+
+        // Restart button
+        Button restartButton = new Button("New Game");
+        restartButton.setStyle("-fx-background-color: #4CAF50; -fx-text-fill: white; -fx-font-size: 16px;");
+        restartButton.setPrefWidth(200);
+        restartButton.setOnAction(e -> {
+            winStage.close();
+            resetGame();
+        });
+
+        mainLayout.getChildren().addAll(resultText, scorecard, restartButton);
+
+        // Show the win page
+        winStage.setScene(new Scene(mainLayout, 400, 300));
+        winStage.show();
+    }
+
+    private void resetGame() {
+        // Reset game state
+        gameOver = false;
+        gameResult = "";
+        whiteTotalTime = 600;
+        blackTotalTime = 600;
+        currentPlayer = "w";
+        isMyTurn = isServer;
+        whitePoints = 0;
+        blackPoints = 0;
+        capturedByWhite.clear();
+        capturedByBlack.clear();
+        updatePointsDisplay();
+        updateCapturedDisplay();
+        
+        // Reset board
+        for (int i = 0; i < HEIGHT; i++) {
+            Arrays.fill(piecePositions[i], null);
+        }
+        initializePieces();
+        updateBoard();
+        
+        // Reset UI
+        gameStatusText.setText(isMyTurn ? myName + "'s turn" : opponentName + "'s turn");
+        updateTimerDisplay();
+        
+        // Enable buttons
+        resignButton.setDisable(false);
+        
+        // Restart timer
+        timer.stop();
+        timer.playFromStart();
+    }
+
+    private void updatePointsDisplay() {
+        whitePointsText.setText("White Points: " + whitePoints);
+        blackPointsText.setText("Black Points: " + blackPoints);
+    }
+
+    private int getPieceValue(String piece) {
+        if (piece == null) return 0;
+        switch (piece.charAt(1)) {
+            case 'P': return 1;
+            case 'N':
+            case 'B': return 3;
+            case 'R': return 5;
+            case 'Q': return 9;
+            default: return 0;
         }
     }
 
